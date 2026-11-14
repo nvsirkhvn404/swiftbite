@@ -1,7 +1,7 @@
 # Databricks notebook source
 # DBTITLE 1,Schemas and Paths
 CATALOG = "swiftbite"
-RAW_ROOT = "/Volumes/swiftbite/landing/raw_data/raw"
+RAW_ROOT = "/Volumes/swiftbite/landing/raw"
 CHECKPOINT_ROOT = f"/Volumes/{CATALOG}/landing/checkpoints"
 
 BRONZE_SCHEMA = "bronze"
