@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # DBTITLE 1,Run shared config
 # MAGIC %run "./01_shared_config"
 
@@ -12,7 +16,8 @@ def ingest_table(name):
     # Define path variables
     config = TABLES[name]
     source_path = f"{RAW_ROOT}/{config['path']}"
-    checkpoint = f"{CHECKPOINT_ROOT}/{name}"
+    schema_path = f"{CHECKPOINT_ROOT}/{name}/schema"
+    checkpoint_path = f"{CHECKPOINT_ROOT}/{name}/checkpoint"
     target_table = f"{CATALOG}.{BRONZE_SCHEMA}.{name}"
 
     # Configure Auto Loader (cloudFiles) to read files incrementally
@@ -20,7 +25,7 @@ def ingest_table(name):
         spark.readStream.format("cloudFiles")
         .option("cloudFiles.format", config["format"])  # Input file format (csv, json, parquet, etc.)
         .option("cloudFiles.inferColumnTypes", "true")  # Automatically infer column data types
-        .option("cloudFiles.schemaLocation", checkpoint)  # Store schema metadata for tracking changes
+        .option("cloudFiles.schemaLocation", schema_path) # Store schema metadata for tracking changes
         .option("cloudFiles.schemaEvolutionMode", "rescue")  # Capture unexpected columns instead giving error
         .option("rescuedDataColumn", "_rescued_data")  # Column for rescued data
     )
@@ -43,7 +48,7 @@ def ingest_table(name):
     # Write streaming data into a Delta table
     query = (
         enriched.writeStream.format("delta")
-        .option("checkpointLocation", checkpoint)  # Checkpoint location for fault tolerance
+        .option("checkpointLocation", checkpoint_path)  # Checkpoint location for fault tolerance
         .option("mergeSchema", "true")  # Automatically evolve target schema
         .trigger(availableNow=True)  # Process all available files and then stop
         .toTable(target_table)  # Write output to target Delta table
