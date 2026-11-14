@@ -16,7 +16,7 @@
 # MAGIC CREATE SCHEMA IF NOT EXISTS swiftbite.silver;
 # MAGIC CREATE SCHEMA IF NOT EXISTS swiftbite.gold;
 # MAGIC
-# MAGIC CREATE VOLUME IF NOT EXISTS swiftbite.landing.raw_data;
+# MAGIC CREATE VOLUME IF NOT EXISTS swiftbite.landing.raw;
 # MAGIC CREATE VOLUME IF NOT EXISTS swiftbite.landing.checkpoints;
 
 # COMMAND ----------

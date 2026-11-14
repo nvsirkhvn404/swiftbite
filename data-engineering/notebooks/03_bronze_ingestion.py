@@ -66,11 +66,3 @@ def ingest_table(name):
 # Call ingest_table for each tables
 for table_name in TABLES:
     ingest_table(table_name)
-
-# COMMAND ----------
-
-# DBTITLE 1,Print row count
-# Print row count
-for table_name in TABLES:
-    full_name = f"{CATALOG}.{BRONZE_SCHEMA}.{table_name}"
-    print(f"{full_name:<42} {spark.table(full_name).count():>10,} rows")
