@@ -31,10 +31,11 @@ TABLES = {
 
 # DBTITLE 1,Deduplication Keys and Ordering Configuration
 DEDUP_KEYS = {
-    "restaurants": dict(key="restaurant_id",  order_by="review_count",     desc=True),
-    "drivers":     dict(key="driver_id",      order_by="total_deliveries", desc=True),
-    "orders":      dict(key="order_id",       order_by="updated_at",       desc=True),
-    "order_items": dict(key="order_item_id",  order_by="line_total",       desc=True),
-    "order_events": dict(key="event_id",      order_by="ingestion_time",   desc=False),
-    "driver_gps":   dict(key="event_id",      order_by="ingestion_time",   desc=False),
+    "restaurants": dict(key="restaurant_id", order_by="_ingested_at", desc=True),
+    "drivers": dict(key="driver_id", order_by="_ingested_at", desc=True),
+    "orders": dict(key="order_id", order_by="updated_at", desc=True),
+    "order_items": dict(key="order_item_id", order_by="_ingested_at", desc=True),
+    "order_events": dict(key="event_id", order_by="ingestion_time", desc=False),
+    "driver_gps": dict(key="event_id", order_by="ingestion_time", desc=False),
+    "restaurant_status_events": dict(key="event_id", order_by="ingestion_time", desc=False),
 }
