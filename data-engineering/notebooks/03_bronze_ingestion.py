@@ -49,7 +49,6 @@ def ingest_table(name):
     query = (
         enriched.writeStream.format("delta")
         .option("checkpointLocation", checkpoint_path)  # Checkpoint location for fault tolerance
-        .option("mergeSchema", "true")  # Automatically evolve target schema
         .trigger(availableNow=True)  # Process all available files and then stop
         .toTable(target_table)  # Write output to target Delta table
     )
