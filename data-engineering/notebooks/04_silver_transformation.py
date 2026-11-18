@@ -11,6 +11,9 @@
 # DBTITLE 1,Import PySpark SQL Functions
 from pyspark.sql.functions import col, trim, desc, regexp_replace, when, initcap, upper, row_number, length, abs, asc, count
 from pyspark.sql import Window
+from uuid import uuid4
+
+RUN_ID = str(uuid4())
 
 # COMMAND ----------
 
@@ -62,8 +65,13 @@ def load_to_silver(df, name):
 
 # DBTITLE 1,Store DataFrame in Quarantine Schema
 def load_to_quarantine(df, name):
+    quarantine = df.withColumns(
+        {"_quarantined_at": F.current_timestamp()},
+        {"_run_id": F.lit(RUN_ID)}
+    )
+
     (
-        df.write.format("delta")
+        quarantine.write.format("delta")
         .mode("overwrite")
         .option("overwriteSchema", "true")
         .saveAsTable(f"{CATALOG}.{QUARANTINE_SCHEMA}.{name}_quarantine")
@@ -410,3 +418,7 @@ display(restaurant_status_events_df.limit(10))
 
 # DBTITLE 1,Save Restaurant Status Events to Silver Layer
 load_to_silver(restaurant_status_events_df, "restaurant_status_events")
+
+# COMMAND ----------
+
+print(f"Silver transformation complete. RUN_ID={RUN_ID}")
