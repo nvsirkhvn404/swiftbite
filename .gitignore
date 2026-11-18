@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Databricks / local tooling
+.databricks/
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
