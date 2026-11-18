@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # DBTITLE 1,Load Shared Configurations
 # MAGIC %run "./01_shared_config"
 
@@ -11,11 +15,8 @@ from pyspark.sql import Window
 # COMMAND ----------
 
 # DBTITLE 1,Load and Preview Bronze Table Data
-def get_bronze(name:str):
-    df = spark.table(f"{CATALOG}.{BRONZE_SCHEMA}.{name}")
-    print(f"{name.capitalize()} count:", df.count())
-    display(df.limit(10))
-    return df
+def get_bronze(name):
+    return spark.table(f"{CATALOG}.{BRONZE_SCHEMA}.{name}")
 
 # COMMAND ----------
 
