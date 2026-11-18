@@ -9,7 +9,7 @@
 # COMMAND ----------
 
 # DBTITLE 1,Import PySpark SQL Functions
-from pyspark.sql.functions import col, trim, desc, regexp_replace, when, initcap, upper, row_number, length, abs, asc, count
+from pyspark.sql import functions as F
 from pyspark.sql import Window
 from uuid import uuid4
 
@@ -31,17 +31,17 @@ def dedupe(df, name: str):
     dk = DEDUP_KEYS[name]
     key = dk["key"]
 
-    order_col = col(dk["order_by"]).desc() if dk["desc"] else col(dk["order_by"]).asc()
+    order_col = F.col(dk["order_by"]).F.desc() if dk["desc"] else F.col(dk["order_by"]).F.asc()
 
     w = Window.partitionBy(key).orderBy(order_col)
 
-    ranked = df.withColumn("_rn", row_number().over(w))
+    ranked = df.withColumn("_rn", F.row_number().over(w))
 
-    good_df = ranked.filter(col("_rn") == 1).drop("_rn")
+    good_df = ranked.filter(F.col("_rn") == 1).drop("_rn")
 
     row_count = ranked.agg(
-        count(when(col("_rn") == 1, True)).alias("good"),
-        count(when(col("_rn") > 1, True)).alias("dup"),
+        F.count(F.when(F.col("_rn") == 1, True)).alias("good"),
+        F.count(F.when(F.col("_rn") > 1, True)).alias("dup"),
     ).first()
     good_n, bad_n = row_count["good"], row_count["dup"]
 
@@ -98,23 +98,23 @@ email_regex = (
 
 customers_df = (
     customers_df.withColumn(
-        "email", regexp_replace("email", r"@@", "@")
+        "email", F.regexp_replace("email", r"@@", "@")
     )  # Fix double @
     .withColumn(
-        "email", regexp_replace("email", r"gmial\.con$", "gmail.com")
+        "email", F.regexp_replace("email", r"gmial\.con$", "gmail.com")
     )  # Fix typo gmial.con to gmail.com
     .withColumn(
-        "email", regexp_replace("email", r"@1\.com$", "@gmail.com")
+        "email", F.regexp_replace("email", r"@1\.com$", "@gmail.com")
     )  # Fix bad domain
     .withColumn(
         "email",
-        regexp_replace(
+        F.regexp_replace(
             "email", r"@(gmail|yahoo|outlook|rediffmail)$", r"@$1.com"
         ),  # Fix missing .com
     )
     .withColumn(
         "email",
-        regexp_replace(
+        F.regexp_replace(
             "email",
             r"^([a-z.'’]+\d+)(gmail\.com|yahoo\.com|outlook\.com|rediffmail\.com)$",
             r"$1@$2",
@@ -122,30 +122,30 @@ customers_df = (
     )
     .withColumn(
         "email",
-        when(col("email").rlike(email_regex), col("email")).otherwise(
+        F.when(F.col("email").rlike(email_regex), F.col("email")).otherwise(
             None
         )  # Replace bad values with Null
     )
 )
 
 # Count bad email
-customers_df.select("email").filter(col("email").isNull()).count()
+customers_df.select("email").filter(F.col("email").isNull()).count()
 
 # COMMAND ----------
 
 # DBTITLE 1,Normalize and validate phone
 customers_df = (
-    customers_df.withColumn("phone", regexp_replace("phone", r"^\+91|[-\s]", ""))
-    .withColumn("phone", regexp_replace("phone", r"^0", ""))
-    .withColumn("phone", when(col("phone").rlike(r"^\d{10}$"), col("phone")).otherwise(None))
+    customers_df.withColumn("phone", F.regexp_replace("phone", r"^\+91|[-\s]", ""))
+    .withColumn("phone", F.regexp_replace("phone", r"^0", ""))
+    .withColumn("phone", F.when(F.col("phone").rlike(r"^\d{10}$"), F.col("phone")).otherwise(None))
 )
 
-customers_df.select("phone").filter(col("phone").isNull()).count()
+customers_df.select("phone").filter(F.col("phone").isNull()).count()
 
 # COMMAND ----------
 
 # DBTITLE 1,Standardize city names
-customers_df = customers_df.withColumn("city", trim(initcap( col("city"))))
+customers_df = customers_df.withColumn("city", F.trim(F.initcap(F.col("city"))))
 customers_df.select("city").distinct().show()
 
 # COMMAND ----------
@@ -171,8 +171,8 @@ restaurants_df = dedupe(restaurants_df, "restaurants")
 # COMMAND ----------
 
 # DBTITLE 1,Split restaurants into good and bad rating groups
-good_restaurants_df = restaurants_df.filter(col("rating").isNull() | col("rating").between(1, 5)) # Keep
-bad_restaurants_df = restaurants_df.filter(col("rating").isNotNull() & ~col("rating").between(1, 5)) # Quarantine
+good_restaurants_df = restaurants_df.filter(F.col("rating").isNull() | F.col("rating").between(1, 5)) # Keep
+bad_restaurants_df = restaurants_df.filter(F.col("rating").isNotNull() & ~F.col("rating").between(1, 5)) # Quarantine
 
 # COMMAND ----------
 
@@ -198,7 +198,7 @@ drivers_df = dedupe(drivers_df, "drivers")
 # COMMAND ----------
 
 # DBTITLE 1,Standardize Employment Status Values
-drivers_df = drivers_df.withColumn("employment_status", upper(trim(col("employment_status"))))
+drivers_df = drivers_df.withColumn("employment_status", F.upper(F.trim(F.col("employment_status"))))
 drivers_df.select("employment_status").distinct().show()
 
 # COMMAND ----------
@@ -226,9 +226,9 @@ orders_df = dedupe(orders_df, "orders")
 # DBTITLE 1,Clean and Standardize Promo Codes
 orders_df = (
     orders_df
-        .withColumn("promo_code", trim(upper(col("promo_code"))))
-        .withColumn("promo_code", regexp_replace(col("promo_code"), r"#+$", ""))
-        .withColumn("promo_code", when(length(col("promo_code")) < 3, None).otherwise(col("promo_code")))
+        .withColumn("promo_code", F.trim(F.upper(F.col("promo_code"))))
+        .withColumn("promo_code", F.regexp_replace(F.col("promo_code"), r"#+$", ""))
+        .withColumn("promo_code", F.when(F.length(F.col("promo_code")) < 3, None).otherwise(F.col("promo_code")))
 )
 orders_df.select("promo_code").distinct().show()
 
@@ -236,17 +236,17 @@ orders_df.select("promo_code").distinct().show()
 
 # DBTITLE 1,Validate Orders by Comparing Calculated and Reported To ...
 calculated_total = (
-    col("subtotal")
-    - col("discount_amount")
-    + col("tax_amount")
-    + col("delivery_fee")
-    + col("surge_fee")
-    + col("tip_amount")
+    F.col("subtotal")
+    - F.col("discount_amount")
+    + F.col("tax_amount")
+    + F.col("delivery_fee")
+    + F.col("surge_fee")
+    + F.col("tip_amount")
 )
 
 good_orders_df = orders_df.filter(
-    (col("discount_amount") >= 0) &
-    (abs(calculated_total - col("total_amount")) <= 0.01)
+    (F.col("discount_amount") >= 0) &
+    (F.abs(calculated_total - F.col("total_amount")) <= 0.01)
 )
 bad_orders_df = orders_df.join(good_orders_df, on="order_id", how="left_anti")
 
@@ -275,13 +275,13 @@ order_items_df = dedupe(order_items_df, "order_items")
 
 # DBTITLE 1,Filter and separate valid and invalid order items
 good_order_items_df = order_items_df.filter(
-    col("product_name").isNotNull()
-    & (trim(col("product_name")) != "")
-    & (col("quantity") > 0)
+    F.col("product_name").isNotNull()
+    & (F.trim(F.col("product_name")) != "")
+    & (F.col("quantity") > 0)
     & (
-        abs(
-            ((col("quantity") * col("unit_price")) - col("item_discount"))
-            - col("line_total")
+        F.abs(
+            ((F.col("quantity") * F.col("unit_price")) - F.col("item_discount"))
+            - F.col("line_total")
         )
         <= 0.01
     )
@@ -332,12 +332,12 @@ order_events_df = dedupe(order_events_df, "order_events")
 # DBTITLE 1,Clean empty driver IDs and dropping app version column
 order_events_df = order_events_df.withColumns(
     {
-        "event_time": col("event_time").cast("timestamp"),
-        "ingestion_time": col("ingestion_time").cast("timestamp"),
-        "driver_id": when((trim(col("driver_id")) == ""), None).otherwise(col("driver_id"))
+        "event_time": F.col("event_time").cast("timestamp"),
+        "ingestion_time": F.col("ingestion_time").cast("timestamp"),
+        "driver_id": F.when((F.trim(F.col("driver_id")) == ""), None).otherwise(F.col("driver_id"))
     }
 ).drop("app_version")
-order_events_df.select("driver_id").filter((trim(col("driver_id")) == "")).count()
+order_events_df.select("driver_id").filter((F.trim(F.col("driver_id")) == "")).count()
 
 # COMMAND ----------
 
@@ -364,10 +364,10 @@ driver_gps_df = dedupe(driver_gps_df, "driver_gps")
 # DBTITLE 1,Clean Empty Order Ids in Driver GPS DataFrame
 driver_gps_df = driver_gps_df.withColumns(
     {
-        "timestamp": col("timestamp").cast("timestamp"),
-        "ingestion_time": col("ingestion_time").cast("timestamp"),
-        "order_id": when(trim(col("order_id")) == "", None).otherwise(col("order_id")),
-        "speed_anomaly": col("speed_kmh") > 80,
+        "timestamp": F.col("timestamp").cast("timestamp"),
+        "ingestion_time": F.col("ingestion_time").cast("timestamp"),
+        "order_id": F.when(F.trim(F.col("order_id")) == "", None).otherwise(F.col("order_id")),
+        "speed_anomaly": F.col("speed_kmh") > 80,
     }
 )
 
@@ -375,13 +375,13 @@ driver_gps_df = driver_gps_df.withColumns(
 
 # DBTITLE 1,Filter Driver GPS Data by Battery Percentage Validity
 good_driver_gps_df = driver_gps_df.filter(
-    col("battery_percent").isNotNull() &
-    col("battery_percent").between(1, 100)
+    F.col("battery_percent").isNotNull() &
+    F.col("battery_percent").between(1, 100)
 )
 
 bad_driver_gps_df = driver_gps_df.filter(
-    col("battery_percent").isNull() |
-    ~col("battery_percent").between(1, 100)
+    F.col("battery_percent").isNull() |
+    ~F.col("battery_percent").between(1, 100)
 )
 
 # COMMAND ----------
@@ -403,12 +403,12 @@ restaurant_status_events_df = get_bronze("restaurant_status_events")
 # COMMAND ----------
 
 # DBTITLE 0,Verify Duplicate Event IDs
-# restaurant_status_events_df.groupBy("event_id").count().filter(col("count")>1).count() # 0
+# restaurant_status_events_df.groupBy("event_id").F.count().filter(F.col("count")>1).F.count() # 0
 restaurant_status_events_df = restaurant_status_events_df.withColumns(
     {
-        "reason": when(trim(col("reason")) == "", None).otherwise(col("reason")),
-        "event_time": col("event_time").cast("timestamp"),
-        "ingestion_time": col("ingestion_time").cast("timestamp"),
+        "reason": F.when(F.trim(F.col("reason")) == "", None).otherwise(F.col("reason")),
+        "event_time": F.col("event_time").cast("timestamp"),
+        "ingestion_time": F.col("ingestion_time").cast("timestamp"),
     }
 )
 
