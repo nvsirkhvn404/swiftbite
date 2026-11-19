@@ -87,18 +87,15 @@ def load_to_silver(df, name):
 # COMMAND ----------
 
 # DBTITLE 1,Store DataFrame in Quarantine Schema
-def load_to_quarantine(df, name):
+def write_quarantine(df, name):
+    target = f"{CATALOG}.{QUARANTINE_SCHEMA}.{name}_quarantine"
+
     quarantine = df.withColumns(
-        {"_quarantined_at": F.current_timestamp()},
-        {"_run_id": F.lit(RUN_ID)}
+        {"_quarantined_at": F.current_timestamp()}, {"_run_id": F.lit(RUN_ID)}
     )
-    (
-        quarantine.write.format("delta")
-        .mode("overwrite")
-        .option("overwriteSchema", "true")
-        .saveAsTable(f"{CATALOG}.{QUARANTINE_SCHEMA}.{name}_quarantine")
-    )
-    print(f"quarantine.{name}_quarantine written, {df.count():,} rows")
+
+    overwrite(quarantine, target)
+    print(f"quarantine.{name}_quarantine: {quarantine.count():,} row(s)")
 
 # COMMAND ----------
 

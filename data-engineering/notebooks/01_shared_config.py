@@ -61,3 +61,13 @@ def with_row_fingerprint(df):
 
     # Create a hash from the data values
     return df.withColumn("_row_fingerprint", F.xxhash64(*data_values))
+
+# COMMAND ----------
+
+def overwrite(df, table_name, partition_by=None):
+    writer = (
+        df.write.format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+        .saveAsTable(table_name)
+    )
