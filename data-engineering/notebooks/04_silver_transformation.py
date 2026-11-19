@@ -23,31 +23,54 @@ def get_bronze(name):
 
 # COMMAND ----------
 
-# DBTITLE 1,Deduplicate Rows with Window Ranking
-def dedupe(df, name: str):
-    if name not in DEDUP_KEYS:
+# DBTITLE 1,Deduplicate Rows
+def dedupe(df, name):
+    # Get the deduplication rules for this table
+    config = DEDUP_KEYS.get(name)
+
+    # If no rules exist, return the data without changes
+    if not config:
         return df
 
-    dk = DEDUP_KEYS[name]
-    key = dk["key"]
+    # Get the column used to identify duplicates
+    key = config["key"]
 
-    order_col = F.col(dk["order_by"]).F.desc() if dk["desc"] else F.col(dk["order_by"]).F.asc()
+    # Sort records by the configured column
+    # Newest or highest value comes first if desc=True
+    if config["desc"]:
+        order_columns = [F.col(config["order_by"]).desc_nulls_last()]
+    else:
+        order_columns = [F.col(config["order_by"]).asc_nulls_last()]
 
-    w = Window.partitionBy(key).orderBy(order_col)
+    # If the main sorting values tie, prefer the latest ingestion
+    if "_ingested_at" in df.columns and config["order_by"] != "_ingested_at":
+        order_columns.append(F.col("_ingested_at").desc_nulls_last())
 
-    ranked = df.withColumn("_rn", F.row_number().over(w))
+    # If ingestion timestamps also tie, use the source file name
+    if "_source_file" in df.columns and config["order_by"] != "_source_file":
+        order_columns.append(F.col("_source_file").desc_nulls_last())
 
-    good_df = ranked.filter(F.col("_rn") == 1).drop("_rn")
+    # Create a fingerprint to break any remaining ties
+    df = with_row_fingerprint(df)
 
-    row_count = ranked.agg(
-        F.count(F.when(F.col("_rn") == 1, True)).alias("good"),
-        F.count(F.when(F.col("_rn") > 1, True)).alias("dup"),
-    ).first()
-    good_n, bad_n = row_count["good"], row_count["dup"]
+    # Use the fingerprint as the final sorting rule
+    order_columns.append(F.col("_row_fingerprint").asc_nulls_last())
 
-    print(f"{name}: good rows count = {good_n:,} and duplicate rows count = {bad_n:,}")
+    # Group records by their key and rank them using the sorting rules
+    window = Window.partitionBy(key).orderBy(*order_columns)
 
-    return good_df
+    ranked = df.withColumn("_rn", F.row_number().over(window))
+
+    # Keep the first record from each group and remove temporary columns
+    good = ranked.filter(F.col("_rn") == 1).drop("_rn", "_row_fingerprint")
+
+    # Count how many duplicate records were removed
+    removed = ranked.filter(F.col("_rn") > 1).count()
+
+    # Print the deduplication result
+    print(f"{name}: removed {removed:,} duplicate row(s) on {key}")
+
+    return good
 
 # COMMAND ----------
 
@@ -69,7 +92,6 @@ def load_to_quarantine(df, name):
         {"_quarantined_at": F.current_timestamp()},
         {"_run_id": F.lit(RUN_ID)}
     )
-
     (
         quarantine.write.format("delta")
         .mode("overwrite")
