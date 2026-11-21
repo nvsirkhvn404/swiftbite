@@ -65,9 +65,7 @@ def with_row_fingerprint(df):
 # COMMAND ----------
 
 def overwrite(df, table_name, partition_by=None):
-    writer = (
-        df.write.format("delta")
-        .mode("overwrite")
-        .option("overwriteSchema", "true")
-        .saveAsTable(table_name)
-    )
+    df.write.format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(table_name)
