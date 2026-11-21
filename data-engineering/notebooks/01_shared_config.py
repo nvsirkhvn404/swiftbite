@@ -64,8 +64,15 @@ def with_row_fingerprint(df):
 
 # COMMAND ----------
 
+# DBTITLE 1,Overwrite Delta Table with Optional Partitioning
 def overwrite(df, table_name, partition_by=None):
-    df.write.format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable(table_name)
+    writer = (
+        df.write.format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+    )
+
+    if partition_by:
+        writer = writer.partitionBy(*partition_by)
+
+    writer.saveAsTable(table_name)
