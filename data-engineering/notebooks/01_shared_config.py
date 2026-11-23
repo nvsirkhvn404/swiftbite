@@ -50,3 +50,19 @@ def overwrite(df, table_name):
         .option("overwriteSchema", "true")
         .saveAsTable(table_name)
     )
+
+# COMMAND ----------
+
+# DBTITLE 1,Create a stable surrogate key
+def surrogate_key(*columns):
+    values = [F.col(column).cast("string") for column in columns]
+    return F.pmod(F.xxhash64(*values), F.lit(2**63 - 1))
+
+# COMMAND ----------
+
+# DBTITLE 1,Add an unknown member to a dimension
+def add_unknown_member(df, **values):
+    row = {column: None for column in df.columns}
+    row.update(values)
+    unknown = spark.createDataFrame([Row(**row)], schema=df.schema)
+    return df.unionByName(unknown)
