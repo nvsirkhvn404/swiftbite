@@ -8,8 +8,20 @@ The data includes customers, restaurants, drivers, orders, payments, delivery ev
 
 - **Landing:** holds the source files and Auto Loader checkpoints.
 - **Bronze:** stores the ingested data as Delta tables.
-- **Silver:** cleans and checks the data. Some rejected rows are saved in quarantine tables.
+- **Silver:** cleans, deduplicates and checks the data. Some rejected rows go to are saved in quarantine tables.
 - **Gold:** contains tables prepared for analysis, including the order model and hourly event counts.
+
+## What the project demonstrates
+
+- Incremental ingestion with Auto Loader and schema rescue.
+- Deterministic deduplication with a natural key and tie-breakers.
+- Quarantine tables with a reason, run id, and timestamp.
+- Delta `MERGE` for keyed Silver tables.
+- Stable `xxhash64` surrogate keys.
+- SCD Type 2 customer history.
+- `-1` unknown members so facts never have null foreign keys.
+- Basic fact-grain and referential-integrity checks.
+- `OPTIMIZE ... ZORDER` for file layout.
 
 ## Source files
 
