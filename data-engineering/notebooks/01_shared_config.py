@@ -42,6 +42,11 @@ DEDUP_KEYS = {
 
 # COMMAND ----------
 
+# DBTITLE 1,Imports
+from pyspark.sql import functions as F
+
+# COMMAND ----------
+
 # DBTITLE 1,Overwrite a Delta table
 def overwrite(df, table_name):
     (
@@ -63,6 +68,11 @@ def surrogate_key(*columns):
 # DBTITLE 1,Add an unknown member to a dimension
 def add_unknown_member(df, **values):
     row = {column: None for column in df.columns}
+
     row.update(values)
-    unknown = spark.createDataFrame([Row(**row)], schema=df.schema)
+
+    unknown = spark.createDataFrame(
+        [[row[column] for column in df.columns]],
+        schema=df.schema
+    )
     return df.unionByName(unknown)
