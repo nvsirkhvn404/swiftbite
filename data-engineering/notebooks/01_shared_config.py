@@ -42,28 +42,6 @@ DEDUP_KEYS = {
 
 # COMMAND ----------
 
-# DBTITLE 1,Import PySpark SQL Functions Module
-from pyspark.sql import functions as F
-
-# COMMAND ----------
-
-# DBTITLE 1,Generate Row Fingerprint Hash for each row
-def with_row_fingerprint(df):
-    # Select columns containing actual data, excluding metadata
-    data_columns = [column for column in df.columns if not column.startswith("_")]
-
-    # If no data columns exist, create an empty fingerprint
-    if not data_columns:
-        return df.withColumn("_row_fingerprint", F.lit(None).cast("long"))
-
-    # Convert values to strings and replace nulls with a placeholder
-    data_values = [F.coalesce(F.col(column).cast("string"), F.lit("\\N")) for column in data_columns]
-
-    # Create a hash from the data values
-    return df.withColumn("_row_fingerprint", F.xxhash64(*data_values))
-
-# COMMAND ----------
-
 # DBTITLE 1,Overwrite a Delta table
 def overwrite(df, table_name):
     (

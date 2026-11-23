@@ -12,6 +12,7 @@
 from pyspark.sql import functions as F
 from pyspark.sql import Window
 from uuid import uuid4
+from delta.tables import DeltaTable
 
 RUN_ID = str(uuid4())
 
@@ -25,64 +26,73 @@ def get_bronze(name):
 
 # DBTITLE 1,Deduplicate Rows
 def dedupe(df, name):
-    # Get the deduplication rules for this table
     config = DEDUP_KEYS.get(name)
 
-    # If no rules exist, return the data without changes
+    # Tables without a dedupe rule are passed through unchanged.
     if not config:
         return df
 
-    # Get the column used to identify duplicates
     key = config["key"]
 
-    # Sort records by the configured column
-    # Newest or highest value comes first if desc=True
+    # Newest or oldest value first, depending on the rule.
     if config["desc"]:
         order_columns = [F.col(config["order_by"]).desc_nulls_last()]
     else:
         order_columns = [F.col(config["order_by"]).asc_nulls_last()]
 
-    # If the main sorting values tie, prefer the latest ingestion
+    # Tie-breakers make the result deterministic.
     if "_ingested_at" in df.columns and config["order_by"] != "_ingested_at":
         order_columns.append(F.col("_ingested_at").desc_nulls_last())
 
-    # If ingestion timestamps also tie, use the source file name
     if "_source_file" in df.columns and config["order_by"] != "_source_file":
         order_columns.append(F.col("_source_file").desc_nulls_last())
 
-    # Create a fingerprint to break any remaining ties
-    df = with_row_fingerprint(df)
-
-    # Use the fingerprint as the final sorting rule
+    # Hash the data columns so ties are broken deterministically.
+    # Ignore Bronze metadata columns so the hash depends only on the data.
+    data_columns = [column for column in df.columns if not column.startswith("_")]
+    data_values = [
+        F.coalesce(F.col(column).cast("string"), F.lit("\\N"))
+        for column in data_columns
+    ]
+    df = df.withColumn("_row_fingerprint", F.xxhash64(*data_values))
     order_columns.append(F.col("_row_fingerprint").asc_nulls_last())
 
-    # Group records by their key and rank them using the sorting rules
     window = Window.partitionBy(key).orderBy(*order_columns)
-
     ranked = df.withColumn("_rn", F.row_number().over(window))
 
-    # Keep the first record from each group and remove temporary columns
-    good = ranked.filter(F.col("_rn") == 1).drop("_rn", "_row_fingerprint")
-
-    # Count how many duplicate records were removed
     removed = ranked.filter(F.col("_rn") > 1).count()
-
-    # Print the deduplication result
     print(f"{name}: removed {removed:,} duplicate row(s) on {key}")
 
-    return good
+    return ranked.filter(F.col("_rn") == 1).drop("_rn", "_row_fingerprint")
 
 # COMMAND ----------
 
-# DBTITLE 1,load dataframe in silver schema
-def load_to_silver(df, name):
+# DBTITLE 1,Write a Silver table
+def write_silver(df, name, keys=None):
+    target = f"{CATALOG}.{SILVER_SCHEMA}.{name}"
+
+    if keys:
+        null_condition = " OR ".join([f"`{key}` IS NULL" for key in keys])
+        if df.filter(null_condition).limit(1).count() > 0:
+            raise ValueError(f"silver.{name}: a key column in {keys} is null")
+
+    if not keys or not spark.catalog.tableExists(target):
+        overwrite(df, target)
+        print(f"silver.{name}: overwritten")
+        return
+
+    condition = " AND ".join([f"t.`{key}` = s.`{key}`" for key in keys])
+
     (
-        df.write.format("delta")
-        .mode("overwrite")
-        .option("overwriteSchema", "true")
-        .saveAsTable(f"{CATALOG}.{SILVER_SCHEMA}.{name}")
+        DeltaTable.forName(spark, target)
+        .alias("t")
+        .merge(df.alias("s"), condition)
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute()
     )
-    print(f"silver.{name} written, {df.count():,} rows")
+
+    print(f"silver.{name}: merged on {keys}")
 
 # COMMAND ----------
 
