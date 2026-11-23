@@ -118,73 +118,38 @@ def write_quarantine(df, name, reason):
 
 # COMMAND ----------
 
-# DBTITLE 1,Get bronze customers
+# DBTITLE 1,Clean customer fields
 customers_df = get_bronze("customers")
 
-# COMMAND ----------
-
-# DBTITLE 1,Clean and validate emails
-email_regex = (
-    r"^[a-z]+\.[a-z'’]+\d+@"
-    r"(gmail\.com|yahoo\.com|outlook\.com|rediffmail\.com)$"
-)
+email_regex = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
 
 customers_df = (
-    customers_df.withColumn(
-        "email", F.regexp_replace("email", r"@@", "@")
-    )  # Fix double @
-    .withColumn(
-        "email", F.regexp_replace("email", r"gmial\.con$", "gmail.com")
-    )  # Fix typo gmial.con to gmail.com
-    .withColumn(
-        "email", F.regexp_replace("email", r"@1\.com$", "@gmail.com")
-    )  # Fix bad domain
+    customers_df.withColumn("email", F.lower(F.trim(F.col("email"))))
     .withColumn(
         "email",
-        F.regexp_replace(
-            "email", r"@(gmail|yahoo|outlook|rediffmail)$", r"@$1.com"
-        ),  # Fix missing .com
+        F.when(F.col("email").rlike(email_regex), F.col("email")).otherwise(None),
     )
-    .withColumn(
-        "email",
-        F.regexp_replace(
-            "email",
-            r"^([a-z.'’]+\d+)(gmail\.com|yahoo\.com|outlook\.com|rediffmail\.com)$",
-            r"$1@$2",
-        ),  # Fix missing @
-    )
-    .withColumn(
-        "email",
-        F.when(F.col("email").rlike(email_regex), F.col("email")).otherwise(
-            None
-        )  # Replace bad values with Null
-    )
-)
-
-# Count bad email
-customers_df.select("email").filter(F.col("email").isNull()).count()
-
-# COMMAND ----------
-
-# DBTITLE 1,Normalize and validate phone
-customers_df = (
-    customers_df.withColumn("phone", F.regexp_replace("phone", r"^\+91|[-\s]", ""))
+    .withColumn("phone", F.regexp_replace("phone", r"^\+91|[-\s]", ""))
     .withColumn("phone", F.regexp_replace("phone", r"^0", ""))
-    .withColumn("phone", F.when(F.col("phone").rlike(r"^\d{10}$"), F.col("phone")).otherwise(None))
+    .withColumn(
+        "phone",
+        F.when(F.col("phone").rlike(r"^\d{10}$"), F.col("phone")).otherwise(None),
+    )
+    .withColumn("city", F.trim(F.initcap(F.col("city"))))
+    .withColumn("signup_timestamp", F.col("signup_timestamp").cast("timestamp"))
 )
 
-customers_df.select("phone").filter(F.col("phone").isNull()).count()
+bad_emails = customers_df.filter(F.col("email").isNull()).count()
+bad_phones = customers_df.filter(F.col("phone").isNull()).count()
+print(f"customers: {bad_emails:,} missing or invalid email(s)")
+print(f"customers: {bad_phones:,} missing or invalid phone(s)")
 
 # COMMAND ----------
 
-# DBTITLE 1,Standardize city names
-customers_df = customers_df.withColumn("city", F.trim(F.initcap(F.col("city"))))
-customers_df.select("city").distinct().show()
-
-# COMMAND ----------
-
-# DBTITLE 1,Load Customers DataFrame
-load_to_silver(customers_df, "customers")
+# DBTITLE 1,Write customers to Silver
+# Customers are a full snapshot history, not one row per customer.
+# Replacing the table keeps every version and avoids dropping SCD2 history.
+write_silver(customers_df, "customers")
 
 # COMMAND ----------
 
@@ -193,25 +158,22 @@ load_to_silver(customers_df, "customers")
 
 # COMMAND ----------
 
-# DBTITLE 1,Get bronze restaurants
-restaurants_df = get_bronze("restaurants")
+# DBTITLE 1,Keep valid restaurants and quarantine bad ratings
+restaurants_df = dedupe(get_bronze("restaurants"), "restaurants")
 
-# COMMAND ----------
+good_restaurants = F.col("restaurant_id").isNotNull() & (
+    F.col("rating").isNull() | F.col("rating").between(1, 5)
+)
 
-# DBTITLE 1,Dedupe restaurants dataframe and count duplicate ids
-restaurants_df = dedupe(restaurants_df, "restaurants")
+good_restaurants_df = restaurants_df.filter(good_restaurants)
+bad_restaurants_df = restaurants_df.filter(~good_restaurants)
 
-# COMMAND ----------
-
-# DBTITLE 1,Split restaurants into good and bad rating groups
-good_restaurants_df = restaurants_df.filter(F.col("rating").isNull() | F.col("rating").between(1, 5)) # Keep
-bad_restaurants_df = restaurants_df.filter(F.col("rating").isNotNull() & ~F.col("rating").between(1, 5)) # Quarantine
-
-# COMMAND ----------
-
-# DBTITLE 1,Load Clean Data to Silver and Bad to Quarantine
-load_to_silver(good_restaurants_df, "restaurants")
-load_to_quarantine(bad_restaurants_df, "restaurants")
+write_silver(good_restaurants_df, "restaurants", ["restaurant_id"])
+write_quarantine(
+    bad_restaurants_df,
+    "restaurants",
+    "missing restaurant_id or rating outside 1-5",
+)
 
 # COMMAND ----------
 
@@ -220,24 +182,13 @@ load_to_quarantine(bad_restaurants_df, "restaurants")
 
 # COMMAND ----------
 
-# DBTITLE 1,Get bronze drivers
-drivers_df = get_bronze("drivers")
+# DBTITLE 1,Clean and write drivers
+drivers_df = dedupe(get_bronze("drivers"), "drivers")
+drivers_df = drivers_df.withColumn(
+    "employment_status", F.upper(F.trim(F.col("employment_status")))
+)
 
-# COMMAND ----------
-
-# DBTITLE 1,Deduplicate Drivers by Highest Deliveries per Driver ID
-drivers_df = dedupe(drivers_df, "drivers")
-
-# COMMAND ----------
-
-# DBTITLE 1,Standardize Employment Status Values
-drivers_df = drivers_df.withColumn("employment_status", F.upper(F.trim(F.col("employment_status"))))
-drivers_df.select("employment_status").distinct().show()
-
-# COMMAND ----------
-
-# DBTITLE 1,Load drivers dataframe into silver schema
-load_to_silver(drivers_df, "drivers")
+write_silver(drivers_df, "drivers", ["driver_id"])
 
 # COMMAND ----------
 
@@ -246,28 +197,25 @@ load_to_silver(drivers_df, "drivers")
 
 # COMMAND ----------
 
-# DBTITLE 1,Get bronze orders
-orders_df = get_bronze("orders")
+# DBTITLE 1,Clean order fields
+orders_df = dedupe(get_bronze("orders"), "orders")
 
-# COMMAND ----------
-
-# DBTITLE 1,Remove Duplicate Orders
-orders_df = dedupe(orders_df, "orders")
-
-# COMMAND ----------
-
-# DBTITLE 1,Clean and Standardize Promo Codes
 orders_df = (
     orders_df
-        .withColumn("promo_code", F.trim(F.upper(F.col("promo_code"))))
-        .withColumn("promo_code", F.regexp_replace(F.col("promo_code"), r"#+$", ""))
-        .withColumn("promo_code", F.when(F.length(F.col("promo_code")) < 3, None).otherwise(F.col("promo_code")))
+    .withColumn("promo_code", F.trim(F.upper(F.col("promo_code"))))
+    .withColumn("promo_code", F.regexp_replace(F.col("promo_code"), r"#+$", ""))
+    .withColumn(
+        "promo_code",
+        F.when(F.length(F.col("promo_code")) < 3, None).otherwise(F.col("promo_code")),
+    )
+    .withColumn("delivery_city", F.trim(F.initcap(F.col("delivery_city"))))
+    .withColumn("order_timestamp", F.col("order_timestamp").cast("timestamp"))
+    .withColumn("delivered_timestamp", F.col("delivered_timestamp").cast("timestamp"))
 )
-orders_df.select("promo_code").distinct().show()
 
 # COMMAND ----------
 
-# DBTITLE 1,Validate Orders by Comparing Calculated and Reported To ...
+# DBTITLE 1,Keep orders whose reported total matches the line items
 calculated_total = (
     F.col("subtotal")
     - F.col("discount_amount")
@@ -277,17 +225,24 @@ calculated_total = (
     + F.col("tip_amount")
 )
 
-good_orders_df = orders_df.filter(
-    (F.col("discount_amount") >= 0) &
-    (F.abs(calculated_total - F.col("total_amount")) <= 0.01)
+# A null comparison counts as invalid, so the row goes to quarantine
+# instead of disappearing from both outputs.
+good_orders = F.coalesce(
+    F.col("order_id").isNotNull()
+    & (F.col("discount_amount") >= 0)
+    & (F.abs(calculated_total - F.col("total_amount")) <= 0.01),
+    F.lit(False),
 )
-bad_orders_df = orders_df.join(good_orders_df, on="order_id", how="left_anti")
 
-# COMMAND ----------
+good_orders_df = orders_df.filter(good_orders)
+bad_orders_df = orders_df.filter(~good_orders)
 
-# DBTITLE 1,Load Clean Data to Silver and Bad to Quarantine
-load_to_silver(good_orders_df, "orders")
-load_to_quarantine(bad_orders_df, "orders")
+write_silver(good_orders_df, "orders", ["order_id"])
+write_quarantine(
+    bad_orders_df,
+    "orders",
+    "missing order_id, null or negative discount, or total mismatch",
+)
 
 # COMMAND ----------
 
@@ -296,42 +251,35 @@ load_to_quarantine(bad_orders_df, "orders")
 
 # COMMAND ----------
 
-# DBTITLE 1,Get brone order items
-order_items_df = get_bronze("order_items")
+# DBTITLE 1,Clean and validate order items
+order_items_df = dedupe(get_bronze("order_items"), "order_items")
+order_items_df = order_items_df.withColumn(
+    "product_name", F.trim(F.col("product_name"))
+)
 
-# COMMAND ----------
+calculated_line_total = (
+    (F.col("quantity") * F.col("unit_price")) - F.col("item_discount")
+)
 
-# DBTITLE 1,Identify and Count Duplicate Order Items
-order_items_df = dedupe(order_items_df, "order_items")
-
-# COMMAND ----------
-
-# DBTITLE 1,Filter and separate valid and invalid order items
-good_order_items_df = order_items_df.filter(
-    F.col("product_name").isNotNull()
-    & (F.trim(F.col("product_name")) != "")
+# A null comparison counts as invalid, so the row goes to quarantine.
+good_order_items = F.coalesce(
+    F.col("order_item_id").isNotNull()
+    & F.col("product_name").isNotNull()
+    & (F.col("product_name") != "")
     & (F.col("quantity") > 0)
-    & (
-        F.abs(
-            ((F.col("quantity") * F.col("unit_price")) - F.col("item_discount"))
-            - F.col("line_total")
-        )
-        <= 0.01
-    )
+    & (F.abs(calculated_line_total - F.col("line_total")) <= 0.01),
+    F.lit(False),
 )
 
-bad_order_items_df = order_items_df.join(
-    good_order_items_df, on="order_item_id", how="left_anti"
+good_order_items_df = order_items_df.filter(good_order_items)
+bad_order_items_df = order_items_df.filter(~good_order_items)
+
+write_silver(good_order_items_df, "order_items", ["order_item_id"])
+write_quarantine(
+    bad_order_items_df,
+    "order_items",
+    "missing order_item_id or product, quantity <= 0, or line total mismatch",
 )
-
-print("Good row count:", good_order_items_df.count())
-print("Bad row count:", bad_order_items_df.count())
-
-# COMMAND ----------
-
-# DBTITLE 1,Load Clean Data to Silver and Bad to Quarantine
-load_to_silver(good_order_items_df, "order_items")
-load_to_quarantine(bad_order_items_df, "order_items")
 
 # COMMAND ----------
 
@@ -340,10 +288,10 @@ load_to_quarantine(bad_order_items_df, "order_items")
 
 # COMMAND ----------
 
-# DBTITLE 1,Load Multiple Bronze Tables into Silver
+# DBTITLE 1,Copy small tables to Silver
+# These tables have no cleaning rules yet, so replacing them is enough.
 for name in ["payments", "support_tickets", "traffic", "weather"]:
-    df = get_bronze(name)
-    load_to_silver(df, name)
+    write_silver(get_bronze(name), name)
 
 # COMMAND ----------
 
@@ -352,30 +300,20 @@ for name in ["payments", "support_tickets", "traffic", "weather"]:
 
 # COMMAND ----------
 
-# DBTITLE 1,Get bronze order events
-order_events_df = get_bronze("order_events")
+# DBTITLE 1,Clean order events
+order_events_df = dedupe(get_bronze("order_events"), "order_events")
 
-# COMMAND ----------
-
-# DBTITLE 1,Remove Duplicate Records from Order Events DataFrame
-order_events_df = dedupe(order_events_df, "order_events")
-
-# COMMAND ----------
-
-# DBTITLE 1,Clean empty driver IDs and dropping app version column
 order_events_df = order_events_df.withColumns(
     {
         "event_time": F.col("event_time").cast("timestamp"),
         "ingestion_time": F.col("ingestion_time").cast("timestamp"),
-        "driver_id": F.when((F.trim(F.col("driver_id")) == ""), None).otherwise(F.col("driver_id"))
+        "driver_id": F.when(F.trim(F.col("driver_id")) == "", None).otherwise(
+            F.col("driver_id")
+        ),
     }
 ).drop("app_version")
-order_events_df.select("driver_id").filter((F.trim(F.col("driver_id")) == "")).count()
 
-# COMMAND ----------
-
-# DBTITLE 1,Load Order Events DataFrame to Silver
-load_to_silver(order_events_df, "order_events")
+write_silver(order_events_df, "order_events", ["event_id"])
 
 # COMMAND ----------
 
@@ -384,44 +322,35 @@ load_to_silver(order_events_df, "order_events")
 
 # COMMAND ----------
 
-# DBTITLE 1,Get bronze driver GPS
-driver_gps_df = get_bronze("driver_gps")
+# DBTITLE 1,Clean driver GPS
+driver_gps_df = dedupe(get_bronze("driver_gps"), "driver_gps")
 
-# COMMAND ----------
-
-# DBTITLE 1,Apply Deduplication Function to Driver GPS Dataframe
-driver_gps_df = dedupe(driver_gps_df, "driver_gps")
-
-# COMMAND ----------
-
-# DBTITLE 1,Clean Empty Order Ids in Driver GPS DataFrame
 driver_gps_df = driver_gps_df.withColumns(
     {
         "timestamp": F.col("timestamp").cast("timestamp"),
         "ingestion_time": F.col("ingestion_time").cast("timestamp"),
-        "order_id": F.when(F.trim(F.col("order_id")) == "", None).otherwise(F.col("order_id")),
+        "order_id": F.when(
+            F.trim(F.col("order_id")) == "", None
+        ).otherwise(F.col("order_id")),
         "speed_anomaly": F.col("speed_kmh") > 80,
     }
 )
 
-# COMMAND ----------
-
-# DBTITLE 1,Filter Driver GPS Data by Battery Percentage Validity
-good_driver_gps_df = driver_gps_df.filter(
-    F.col("battery_percent").isNotNull() &
-    F.col("battery_percent").between(1, 100)
+good_driver_gps = (
+    F.col("event_id").isNotNull()
+    & F.col("battery_percent").isNotNull()
+    & F.col("battery_percent").between(1, 100)
 )
 
-bad_driver_gps_df = driver_gps_df.filter(
-    F.col("battery_percent").isNull() |
-    ~F.col("battery_percent").between(1, 100)
+good_driver_gps_df = driver_gps_df.filter(good_driver_gps)
+bad_driver_gps_df = driver_gps_df.filter(~good_driver_gps)
+
+write_silver(good_driver_gps_df, "driver_gps", ["event_id"])
+write_quarantine(
+    bad_driver_gps_df,
+    "driver_gps",
+    "missing event_id or battery_percent, or battery outside 1-100",
 )
-
-# COMMAND ----------
-
-# DBTITLE 1,Load Clean Data to Silver and Bad to Quarantine
-load_to_silver(good_driver_gps_df, "driver_gps")
-load_to_quarantine(bad_driver_gps_df, "driver_gps")
 
 # COMMAND ----------
 
@@ -430,27 +359,26 @@ load_to_quarantine(bad_driver_gps_df, "driver_gps")
 
 # COMMAND ----------
 
-# DBTITLE 1,Get bronze restaurant status events
-restaurant_status_events_df = get_bronze("restaurant_status_events")
+# DBTITLE 1,Clean restaurant status events
+restaurant_status_events_df = dedupe(
+    get_bronze("restaurant_status_events"), "restaurant_status_events"
+)
 
-# COMMAND ----------
-
-# DBTITLE 0,Verify Duplicate Event IDs
-# restaurant_status_events_df.groupBy("event_id").F.count().filter(F.col("count")>1).F.count() # 0
 restaurant_status_events_df = restaurant_status_events_df.withColumns(
     {
-        "reason": F.when(F.trim(F.col("reason")) == "", None).otherwise(F.col("reason")),
+        "reason": F.when(
+            F.trim(F.col("reason")) == "", None
+        ).otherwise(F.col("reason")),
         "event_time": F.col("event_time").cast("timestamp"),
         "ingestion_time": F.col("ingestion_time").cast("timestamp"),
     }
 )
 
-display(restaurant_status_events_df.limit(10))
-
-# COMMAND ----------
-
-# DBTITLE 1,Save Restaurant Status Events to Silver Layer
-load_to_silver(restaurant_status_events_df, "restaurant_status_events")
+write_silver(
+    restaurant_status_events_df,
+    "restaurant_status_events",
+    ["event_id"],
+)
 
 # COMMAND ----------
 
