@@ -8,7 +8,7 @@ The data includes customers, restaurants, drivers, orders, payments, delivery ev
 
 - **Landing:** holds the source files and Auto Loader checkpoints.
 - **Bronze:** stores the ingested data as Delta tables.
-- **Silver:** cleans, deduplicates and checks the data. Some rejected rows go to are saved in quarantine tables.
+- **Silver:** cleans, deduplicates and checks the data. Some rejected rows are saved in quarantine tables.
 - **Gold:** contains tables prepared for analysis, including the order model and hourly event counts.
 
 ## What the project demonstrates
